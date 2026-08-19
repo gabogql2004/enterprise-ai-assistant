@@ -20,7 +20,7 @@ Backend:       Next.js API Routes (o Node.js/Express si se prefiere separar)
 Base de datos: PostgreSQL + Prisma ORM
 Vector DB:     pgvector (extensión de Postgres) o Pinecone
 IA:            Claude API (Anthropic) — modelo claude-sonnet-4-6, chat + embeddings
-Auth:          NextAuth o Clerk (soporte nativo de roles y organizaciones)
+Auth:          NextAuth (Credentials Provider, decidido — ver notas)
 Pagos:         Stripe (suscripciones, checkout, webhooks)
 Deploy:        Vercel (frontend + backend integrados vía Next.js)
 ```
@@ -28,7 +28,9 @@ Deploy:        Vercel (frontend + backend integrados vía Next.js)
 **Notas de decisión:**
 - Next.js elegido (en vez de mantener React + Express separados como en P1/P2) porque simplifica el deploy de un SaaS real en un solo repo, y es un stack muy demandado en el mercado.
 - pgvector preferido sobre Pinecone si el volumen de documentos es bajo/medio, para evitar un servicio externo adicional; Pinecone queda como alternativa si se necesita escalar.
-- Clerk sobre NextAuth si se quiere ahorrar tiempo en la gestión de organizaciones y roles (tiene soporte nativo); NextAuth si se prefiere más control y menor costo.
+- **NextAuth elegido sobre Clerk** (Fase 1, punto 2): el modelo de datos propio (`User`/`Organization` con roles) ya estaba definido antes de evaluar Clerk, y usar Clerk hubiera implicado duplicar esa info entre su sistema externo y la DB propia, o pagar por su feature de "Organizations". NextAuth es gratis, corre en la propia infra, y da control total sobre qué va en la sesión (`organizationId` + `rol` inyectados vía `callbacks.jwt`/`callbacks.session`).
+- **Versiones más nuevas que las originalmente ancladas** (Next 14→16, Prisma 5→7): al hacer el setup inicial, `npm install` trajo versiones mayores más recientes que las documentadas originalmente. Se decidió adoptarlas (en vez de fijar las versiones antiguas) por soporte a largo plazo — ver "Versiones clave de dependencias" y los gotchas de Prisma 7 / Next 16 más abajo.
+- **PostgreSQL local vía Postgres.app** (no una instancia en la nube tipo Supabase/Neon): decisión del usuario para desarrollo local. Postgres.app en versiones recientes ya trae `pgvector` precompilado, así que Fase 2 solo necesita `CREATE EXTENSION IF NOT EXISTS vector;`, sin instalar nada adicional.
 
 ---
 
@@ -156,17 +158,26 @@ Usar códigos de error en mayúsculas y snake_case en inglés (ej. `UNAUTHORIZED
 - **pgvector** requiere habilitar la extensión manualmente en Postgres antes de migrar: `CREATE EXTENSION IF NOT EXISTS vector;`
 - **Stripe webhooks** necesitan el body en formato *raw* (no JSON parseado) para poder verificar la firma — en Next.js esto requiere configuración especial en el route handler.
 - Los **embeddings** tienen un costo por llamada a la API — evitar regenerarlos si el documento no cambió (cachear o verificar hash del contenido antes de reprocesar).
-- **NextAuth/Clerk + multi-tenancy:** asegurarse de que la sesión incluya siempre `organizationId`, no solo `userId`, para no tener que hacer un JOIN extra en cada request.
+- **NextAuth + multi-tenancy:** asegurarse de que la sesión incluya siempre `organizationId`, no solo `userId`, para no tener que hacer un JOIN extra en cada request. Ya implementado vía `callbacks.jwt`/`callbacks.session` en `lib/auth.ts`.
+- **Prisma 7 cambió su arquitectura de conexión**: `url` ya no va en el `datasource` de `schema.prisma` (vive en `prisma.config.ts`), y `PrismaClient` requiere un *driver adapter* explícito (`@prisma/adapter-pg` + `pg`) en vez de resolver la URL internamente. Ver `lib/prisma.ts`. También requiere `dotenv` como dev dependency para que `prisma.config.ts` lea `.env` (`import "dotenv/config"`).
+- **Next.js 16 renombró `middleware.ts` a `proxy.ts`** (mismo comportamiento, export default sigue igual) — `middleware.ts` está deprecado y genera warning en build.
+- **`pdf-parse` (vía `pdfjs-dist`) rompe bajo Turbopack** si se deja que lo empaquete: falla con "Setting up fake worker failed" porque no puede resolver su worker interno desde el bundle. Solución: agregarlo a `serverExternalPackages` en `next.config.ts` (ya hecho).
+- **`pdf-parse` v2 cambió su API** respecto a versiones anteriores: ya no es `pdf(buffer)` sino `new PDFParse({ data: buffer }).getText()` + `.destroy()` para liberar memoria. Ver `lib/documentExtraction.ts`.
+- Next.js 16 auto-genera/actualiza un bloque `<!-- BEGIN:nextjs-agent-rules -->` al final de este archivo cada vez que corre `next dev`, advirtiendo a agentes de IA que esta versión tiene breaking changes. Es intencional (ver `node_modules/next/dist/server/lib/generate-agent-files.js`) — no removerlo, se regenera solo.
 
 ---
 
 ## 📦 Versiones clave de dependencias
 
 ```
-next: ^14.x
-prisma: ^5.x
-@anthropic-ai/sdk: ^0.30.x
-stripe: ^16.x
+next: ^16.x           (era ^14.x — ver "Notas de decisión")
+prisma: ^7.x           (era ^5.x — arquitectura de conexión distinta, ver gotchas)
+@prisma/adapter-pg: ^7.x   (nuevo — requerido por Prisma 7 para el driver adapter)
+next-auth: ^5.0.0-beta.x   (nuevo — auth elegida en Fase 1, punto 2)
+@anthropic-ai/sdk: última estable (no ^0.30.x, se instaló la más reciente disponible)
+pdf-parse: ^2.x        (nuevo — extracción de texto de PDF, Fase 1 punto 3)
+mammoth: última estable    (nuevo — extracción de texto de Word, Fase 1 punto 3)
+stripe: ^16.x           (aún no instalado, pendiente de Fase 3)
 ```
 
 *(Actualizar esta lista si se cambia de versión mayor en cualquiera de estas dependencias.)*
@@ -317,10 +328,15 @@ Responde en JSON:
 ## 🚦 Fases de desarrollo
 
 ### Fase 1 — MVP: Auth + documentos + chat básico
-- [ ] Setup de proyecto (Next.js + PostgreSQL + Prisma)
-- [ ] Autenticación con organizaciones (NextAuth o Clerk)
-- [ ] Upload y procesamiento básico de documentos (extracción de texto)
-- [ ] Chat simple sin RAG todavía (Claude respondiendo directo, sin contexto de documentos)
+- [x] Setup de proyecto (Next.js + PostgreSQL + Prisma)
+- [x] Autenticación con organizaciones (NextAuth, Credentials Provider)
+- [x] Upload y procesamiento básico de documentos (extracción de texto)
+- [x] Chat simple sin RAG todavía (Claude respondiendo directo, sin contexto de documentos)
+
+**Notas de implementación de Fase 1:**
+- El texto extraído de cada documento (punto 3) se guarda como un único `DocumentChunk` (`chunkIndex: 0`, sin `embedding`) en vez de agregar un campo nuevo a `Document`. Fase 2 reemplaza ese chunk único por el chunking real (~500 tokens) + embeddings, sin necesidad de otra migración de schema.
+- El campo `DocumentChunk.embedding` (tipo `vector` de pgvector) sigue comentado en `schema.prisma` — se habilita recién en Fase 2 junto con `CREATE EXTENSION IF NOT EXISTS vector;`.
+- `POST /api/chat` ya persiste `Conversation`/`Message` y valida que el `conversationId` pertenezca a la organización de la sesión (probado explícitamente: un id ajeno devuelve 404, no datos de otra empresa).
 
 ### Fase 2 — RAG real + roles
 - [ ] Setup de vector DB (pgvector o Pinecone)
@@ -382,7 +398,7 @@ Al final de cada sesión de trabajo significativa, actualizar la línea "Última
 
 ---
 
-*Última actualización: contexto inicial del proyecto, antes de comenzar Fase 1.*
+*Última actualización: 2026-08-19 — Fase 1 (MVP) completa: setup del proyecto, autenticación con NextAuth y organizaciones, upload/extracción de documentos (PDF/Word), y chat simple con Claude sin RAG. Todo probado end-to-end. Próximo paso: Fase 2 (RAG real + roles).*
 
 <!-- BEGIN:nextjs-agent-rules -->
 
