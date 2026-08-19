@@ -1,0 +1,93 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Organization {
+  id                String              @id @default(uuid())
+  nombre            String
+  plan              String              @default("free") // "free" | "pro"
+  stripeCustomerId  String?
+  createdAt         DateTime            @default(now())
+  users             User[]
+  documents         Document[]
+  conversations     Conversation[]
+  sentimentAnalyses SentimentAnalysis[]
+  subscription      Subscription?
+}
+
+model User {
+  id             String       @id @default(uuid())
+  email          String       @unique
+  password       String
+  nombre         String
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  rol            String // "admin" | "usuario" | "viewer"
+  createdAt      DateTime     @default(now())
+}
+
+model Document {
+  id             String          @id @default(uuid())
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  nombreArchivo  String
+  estado         String // "pendiente" | "procesado"
+  uploadedBy     String // user id
+  createdAt      DateTime        @default(now())
+  chunks         DocumentChunk[]
+}
+
+model DocumentChunk {
+  id         String   @id @default(uuid())
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id])
+  contenido  String
+  chunkIndex Int
+  // embedding Unsupported("vector")?
+  // ^ Se habilita en Fase 2 junto con `CREATE EXTENSION IF NOT EXISTS vector;`
+  //   No se define todavía para no bloquear la migración inicial (pgvector aún no está activado en la DB).
+}
+
+model Conversation {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  userId         String
+  titulo         String?
+  createdAt      DateTime     @default(now())
+  messages       Message[]
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+  rol            String // "user" | "assistant"
+  contenido      String
+  createdAt      DateTime     @default(now())
+}
+
+model SentimentAnalysis {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  textoOriginal  String
+  sentimiento    String // "positivo" | "negativo" | "neutral"
+  temas          Json // array de strings
+  createdAt      DateTime     @default(now())
+}
+
+model Subscription {
+  id                   String       @id @default(uuid())
+  organizationId       String       @unique
+  organization         Organization @relation(fields: [organizationId], references: [id])
+  stripeSubscriptionId String
+  estado               String
+  plan                 String
+  periodoInicio        DateTime
+  periodoFin           DateTime
+}
