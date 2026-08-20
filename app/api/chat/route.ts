@@ -25,11 +25,16 @@ export async function POST(request: Request) {
 
   let conversation;
   if (conversationId) {
-    // Se busca SIEMPRE filtrando por organizationId de la sesión: nunca se
-    // confía en que el conversationId enviado por el cliente pertenezca a
-    // la organización correcta.
+    // Se busca SIEMPRE filtrando por organizationId Y userId de la sesión:
+    // nunca se confía en que el conversationId enviado por el cliente
+    // pertenezca a la organización o al usuario correctos. Cada usuario
+    // solo puede continuar sus propias conversaciones.
     conversation = await prisma.conversation.findFirst({
-      where: { id: conversationId, organizationId: session.user.organizationId },
+      where: {
+        id: conversationId,
+        organizationId: session.user.organizationId,
+        userId: session.user.id,
+      },
     });
     if (!conversation) {
       return NextResponse.json(

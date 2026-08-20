@@ -23,6 +23,15 @@ export async function POST(request: Request) {
     );
   }
 
+  // viewer es de solo lectura: puede chatear y ver documentos, pero no
+  // subir/modificar contenido.
+  if (session.user.rol === "viewer") {
+    return NextResponse.json(
+      { error: "Tu rol no tiene permiso para subir documentos.", code: "FORBIDDEN" },
+      { status: 403 },
+    );
+  }
+
   const formData = await request.formData();
   const file = formData.get("file");
 
