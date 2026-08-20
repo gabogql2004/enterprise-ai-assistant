@@ -19,7 +19,7 @@ Frontend:      Next.js + TailwindCSS + shadcn/ui
 Backend:       Next.js API Routes (o Node.js/Express si se prefiere separar)
 Base de datos: PostgreSQL + Prisma ORM
 Vector DB:     pgvector (extensión de Postgres) o Pinecone
-IA:            Claude API (Anthropic) — modelo claude-sonnet-4-6, chat + embeddings
+IA:            Claude API (Anthropic) — modelo claude-sonnet-4-6 para chat/RAG. Voyage AI (voyage-3-lite) para embeddings — ver notas de decisión
 Auth:          NextAuth (Credentials Provider, decidido — ver notas)
 Pagos:         Stripe (suscripciones, checkout, webhooks)
 Deploy:        Vercel (frontend + backend integrados vía Next.js)
@@ -31,6 +31,10 @@ Deploy:        Vercel (frontend + backend integrados vía Next.js)
 - **NextAuth elegido sobre Clerk** (Fase 1, punto 2): el modelo de datos propio (`User`/`Organization` con roles) ya estaba definido antes de evaluar Clerk, y usar Clerk hubiera implicado duplicar esa info entre su sistema externo y la DB propia, o pagar por su feature de "Organizations". NextAuth es gratis, corre en la propia infra, y da control total sobre qué va en la sesión (`organizationId` + `rol` inyectados vía `callbacks.jwt`/`callbacks.session`).
 - **Versiones más nuevas que las originalmente ancladas** (Next 14→16, Prisma 5→7): al hacer el setup inicial, `npm install` trajo versiones mayores más recientes que las documentadas originalmente. Se decidió adoptarlas (en vez de fijar las versiones antiguas) por soporte a largo plazo — ver "Versiones clave de dependencias" y los gotchas de Prisma 7 / Next 16 más abajo.
 - **PostgreSQL local vía Postgres.app** (no una instancia en la nube tipo Supabase/Neon): decisión del usuario para desarrollo local. Postgres.app en versiones recientes ya trae `pgvector` precompilado, así que Fase 2 solo necesita `CREATE EXTENSION IF NOT EXISTS vector;`, sin instalar nada adicional.
+- **Voyage AI para embeddings** (Fase 2): Claude API (Anthropic) no tiene endpoint de embeddings — el CLAUDE.md original asumía "chat + embeddings" desde Claude, pero eso no existe. Voyage AI es el partner oficial de Anthropic para esto. Se usa `voyage-3-lite` (512 dimensiones — ver `prisma/schema.prisma`, `DocumentChunk.embedding vector(512)`) por su balance costo/calidad para documentos de políticas/manuales/FAQs (no código). Requiere `VOYAGE_API_KEY` propia, separada de `ANTHROPIC_API_KEY`.
+- **Chunking sin tokenizer real**: `lib/chunking.ts` aproxima 1 token ≈ 0.75 palabras (375 palabras ≈ 500 tokens) en vez de integrar un tokenizer real, para evitar otra dependencia. Es una aproximación, no un conteo exacto.
+- **Historial de conversaciones es privado por usuario**, no compartido a nivel de organización: cada quien ve solo sus propias conversaciones (`Conversation.userId` + `organizationId` de la sesión). Si más adelante se quiere que un admin vea las conversaciones del equipo, es un cambio de alcance a decidir explícitamente, no algo ya soportado.
+- **Sistema de roles sin panel de equipo todavía**: se implementó el enforcement de permisos (`viewer` no puede subir documentos ni invitar; solo `admin` puede invitar) y un endpoint mínimo `POST /api/team/invite` sin UI. El panel de administración de equipo (con UI) sigue siendo tarea de Fase 3.
 
 ---
 
@@ -163,7 +167,7 @@ Usar códigos de error en mayúsculas y snake_case en inglés (ej. `UNAUTHORIZED
 - **Next.js 16 renombró `middleware.ts` a `proxy.ts`** (mismo comportamiento, export default sigue igual) — `middleware.ts` está deprecado y genera warning en build.
 - **`pdf-parse` (vía `pdfjs-dist`) rompe bajo Turbopack** si se deja que lo empaquete: falla con "Setting up fake worker failed" porque no puede resolver su worker interno desde el bundle. Solución: agregarlo a `serverExternalPackages` en `next.config.ts` (ya hecho).
 - **`pdf-parse` v2 cambió su API** respecto a versiones anteriores: ya no es `pdf(buffer)` sino `new PDFParse({ data: buffer }).getText()` + `.destroy()` para liberar memoria. Ver `lib/documentExtraction.ts`.
-- Next.js 16 auto-genera/actualiza un bloque `<!-- BEGIN:nextjs-agent-rules -->` al final de este archivo cada vez que corre `next dev`, advirtiendo a agentes de IA que esta versión tiene breaking changes. Es intencional (ver `node_modules/next/dist/server/lib/generate-agent-files.js`) — no removerlo, se regenera solo.
+- **Next.js 16 auto-generaba un bloque `<!-- BEGIN:nextjs-agent-rules -->` al final de este archivo en cada `next dev`.** Se desactivó (`agentRules: false` en `next.config.ts`) después de que la reescritura truncara el resto del archivo dos veces en la misma sesión (aparentemente al reiniciar el dev server varias veces seguidas). El bloque que queda al final de este archivo es el último que se generó — ya no se actualiza solo, se puede editar/quitar con confianza.
 
 ---
 
@@ -177,6 +181,7 @@ next-auth: ^5.0.0-beta.x   (nuevo — auth elegida en Fase 1, punto 2)
 @anthropic-ai/sdk: última estable (no ^0.30.x, se instaló la más reciente disponible)
 pdf-parse: ^2.x        (nuevo — extracción de texto de PDF, Fase 1 punto 3)
 mammoth: última estable    (nuevo — extracción de texto de Word, Fase 1 punto 3)
+voyageai: última estable   (nuevo — SDK oficial de Voyage AI para embeddings, Fase 2)
 stripe: ^16.x           (aún no instalado, pendiente de Fase 3)
 ```
 
@@ -276,19 +281,19 @@ model Subscription {
 
 ## 🤖 Integración con Claude API (RAG + Sentimiento)
 
-**Ubicación:** `lib/claudeService.ts`, consumido desde `app/api/chat/` y `app/api/sentiment/`
+**Ubicación:** `lib/claudeService.ts` (chat, consumido desde `app/api/chat/`), `lib/vectorStore.ts` (embeddings + búsqueda, vía Voyage AI — Claude API no tiene endpoint de embeddings), `lib/chunking.ts` (división en chunks). `app/api/sentiment/` queda pendiente para Fase 3.
 
-### Flujo RAG (chat sobre documentos)
+### Flujo RAG (chat sobre documentos) — implementado en Fase 2
 
-1. **Ingesta (una vez por documento):**
-   - Extraer texto del PDF/Word subido
+1. **Ingesta (`POST /api/documents`):**
+   - Extraer texto del PDF/Word subido (`lib/documentExtraction.ts`)
    - Dividir en chunks (~500 tokens cada uno) vía `lib/chunking.ts`
-   - Generar embedding de cada chunk
-   - Guardar chunk + embedding en `DocumentChunk` (pgvector)
+   - Generar embedding de cada chunk (Voyage AI, `voyage-3-lite`, `inputType: "document"`)
+   - Guardar chunk + embedding en `DocumentChunk` (pgvector, vía `$executeRaw`)
 
-2. **Consulta (cada pregunta del usuario):**
-   - Generar embedding de la pregunta
-   - Buscar los 3-5 chunks más similares (similitud coseno) en `vectorStore.ts`
+2. **Consulta (`POST /api/chat`, cada pregunta del usuario):**
+   - Generar embedding de la pregunta (`inputType: "query"`)
+   - Buscar los 5 chunks más similares (similitud coseno, operador `<=>`) en `vectorStore.ts`, filtrado por `organizationId`
    - Construir prompt:
      ```
      Responde la siguiente pregunta basándote ÚNICAMENTE en el contexto
@@ -300,7 +305,7 @@ model Subscription {
 
      Pregunta: [pregunta del usuario]
      ```
-   - Enviar a Claude API, guardar respuesta en `Message`
+   - Enviar a Claude API (`claude-sonnet-4-6`), guardar la pregunta original (sin el contexto inyectado) y la respuesta en `Message`
 
 ### Análisis de sentimiento
 
@@ -339,11 +344,20 @@ Responde en JSON:
 - `POST /api/chat` ya persiste `Conversation`/`Message` y valida que el `conversationId` pertenezca a la organización de la sesión (probado explícitamente: un id ajeno devuelve 404, no datos de otra empresa).
 
 ### Fase 2 — RAG real + roles
-- [ ] Setup de vector DB (pgvector o Pinecone)
-- [ ] Pipeline completo de embeddings + chunking
-- [ ] Chat con RAG funcional (respuestas basadas en documentos reales)
-- [ ] Sistema de roles (admin/usuario/viewer)
-- [ ] Historial de conversaciones
+- [x] Setup de vector DB (pgvector)
+- [x] Pipeline completo de embeddings + chunking
+- [x] Chat con RAG funcional (respuestas basadas en documentos reales)
+- [x] Sistema de roles (admin/usuario/viewer)
+- [x] Historial de conversaciones
+
+**Notas de implementación de Fase 2:**
+- `lib/chunking.ts`: chunks de ~375 palabras (aprox. 500 tokens) con 50 palabras de overlap.
+- `lib/vectorStore.ts`: `generarEmbeddings()` (Voyage AI, distingue `inputType: "document"` vs `"query"`) y `buscarChunksSimilares()` (SQL crudo con el operador `<=>` de pgvector, filtrado siempre por `organizationId`).
+- El insert de `DocumentChunk` con embedding usa `$executeRaw` porque Prisma no puede escribir campos `Unsupported("vector")` vía el Client normal.
+- `POST /api/chat` aumenta solo el último turno (user) con el contexto recuperado antes de mandarlo a Claude; lo que se guarda en `Message` es la pregunta original, sin el contexto inyectado, para que el historial se vea limpio en la UI.
+- Roles: `POST /api/documents` y `POST /api/team/invite` verifican `session.user.rol`. Sin UI de equipo todavía (Fase 3).
+- Historial: `GET /api/chat/conversations` y `GET /api/chat/conversations/[id]`, filtrados por `userId` + `organizationId` — conversaciones privadas por usuario, no compartidas a nivel organización.
+- Probado end-to-end con datos ficticios distintivos para confirmar que RAG no alucina: cita hechos inventados del documento correcto, declina responder sin contexto relevante, y una organización no ve documentos ni conversaciones de otra.
 
 ### Fase 3 — Sentimiento + suscripciones + pulido
 - [ ] Módulo de análisis de sentimiento
@@ -398,7 +412,7 @@ Al final de cada sesión de trabajo significativa, actualizar la línea "Última
 
 ---
 
-*Última actualización: 2026-08-19 — Fase 1 (MVP) completa: setup del proyecto, autenticación con NextAuth y organizaciones, upload/extracción de documentos (PDF/Word), y chat simple con Claude sin RAG. Todo probado end-to-end. Próximo paso: Fase 2 (RAG real + roles).*
+*Última actualización: 2026-08-20 — Fase 2 completa: pgvector + chunking + embeddings (Voyage AI) + chat con RAG funcional, sistema de roles (admin/usuario/viewer) con enforcement y endpoint mínimo de invitación, e historial de conversaciones privado por usuario. Todo probado end-to-end, incluyendo aislamiento multi-tenant en la búsqueda vectorial y en el historial. Próximo paso: Fase 3 (sentimiento + Stripe + pulido).*
 
 <!-- BEGIN:nextjs-agent-rules -->
 

@@ -9,14 +9,18 @@ export interface MensajeChat {
   contenido: string;
 }
 
-// Fase 1: chat directo, sin contexto de documentos. El prompt de sistema
-// se reemplaza en Fase 2 por uno que inyecta los chunks relevantes del RAG.
+// El último mensaje de `historial` puede venir ya "aumentado" con el
+// contexto de documentos recuperado por RAG (ver app/api/chat/route.ts);
+// los turnos anteriores se envían tal como se guardaron.
 export async function responderChat(historial: MensajeChat[]): Promise<string> {
   const response = await client.messages.create({
     model: MODEL,
     max_tokens: 4096,
     system:
-      "Eres el asistente interno de una empresa. Responde de forma clara y concisa.",
+      "Eres el asistente interno de una empresa. Responde preguntas de los " +
+      "empleados basándote en el contexto de documentos que se te da en " +
+      "cada mensaje. Si la información no está en el contexto, dilo " +
+      "claramente en vez de inventar una respuesta.",
     messages: historial.map((m) => ({ role: m.rol, content: m.contenido })),
   });
 
