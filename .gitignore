@@ -37,6 +37,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# estado local de sesión del harness de Claude Code (no es del proyecto)
+.claude/scheduled_tasks.lock
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

@@ -1,7 +1,10 @@
+import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { extraerTexto, FormatoNoSoportadoError } from "@/lib/documentExtraction";
+import { dividirEnChunks } from "@/lib/chunking";
+import { generarEmbeddings } from "@/lib/vectorStore";
 
 const TIPOS_SOPORTADOS = [
   "application/pdf",
@@ -68,23 +71,45 @@ export async function POST(request: Request) {
     );
   }
 
-  // El chunking real (división en ~500 tokens + embeddings) llega en Fase 2.
-  // Por ahora se guarda un único chunk con el texto completo para que el
-  // documento ya quede disponible en la biblioteca.
+  const textosChunks = dividirEnChunks(texto);
+  if (textosChunks.length === 0) {
+    return NextResponse.json(
+      { error: "El documento no contiene texto extraíble.", code: "DOCUMENT_PROCESSING_FAILED" },
+      { status: 422 },
+    );
+  }
+
+  let embeddings: number[][];
+  try {
+    embeddings = await generarEmbeddings(textosChunks, "document");
+  } catch {
+    return NextResponse.json(
+      { error: "No se pudieron generar los embeddings del documento.", code: "EMBEDDING_FAILED" },
+      { status: 502 },
+    );
+  }
+
   const document = await prisma.document.create({
     data: {
       organizationId: session.user.organizationId,
       nombreArchivo: file.name,
       estado: "procesado",
       uploadedBy: session.user.id,
-      chunks: {
-        create: {
-          contenido: texto,
-          chunkIndex: 0,
-        },
-      },
     },
   });
 
-  return NextResponse.json({ data: { id: document.id, estado: document.estado } }, { status: 201 });
+  // Unsupported("vector") no es escribible vía el Client de Prisma — el
+  // insert de cada chunk (con su embedding) se hace con SQL crudo.
+  for (let i = 0; i < textosChunks.length; i++) {
+    const vectorLiteral = `[${embeddings[i].join(",")}]`;
+    await prisma.$executeRaw`
+      INSERT INTO "DocumentChunk" (id, "documentId", contenido, "chunkIndex", embedding)
+      VALUES (${randomUUID()}, ${document.id}, ${textosChunks[i]}, ${i}, ${vectorLiteral}::vector)
+    `;
+  }
+
+  return NextResponse.json(
+    { data: { id: document.id, estado: document.estado, chunks: textosChunks.length } },
+    { status: 201 },
+  );
 }

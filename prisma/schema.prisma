@@ -42,14 +42,17 @@ model Document {
 }
 
 model DocumentChunk {
-  id         String   @id @default(uuid())
+  id         String                 @id @default(uuid())
   documentId String
-  document   Document @relation(fields: [documentId], references: [id])
+  document   Document               @relation(fields: [documentId], references: [id])
   contenido  String
   chunkIndex Int
-  // embedding Unsupported("vector")?
-  // ^ Se habilita en Fase 2 junto con `CREATE EXTENSION IF NOT EXISTS vector;`
-  //   No se define todavía para no bloquear la migración inicial (pgvector aún no está activado en la DB).
+  // voyage-3-lite genera vectores de 512 dimensiones. Prisma no tiene tipo
+  // nativo para pgvector: se modela como Unsupported y las búsquedas por
+  // similitud se hacen con $queryRaw (operador <=> de pgvector).
+  embedding  Unsupported("vector(512)")?
+
+  @@index([documentId])
 }
 
 model Conversation {

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { responderChat } from "@/lib/claudeService";
+import { buscarChunksSimilares, generarEmbeddings } from "@/lib/vectorStore";
 
 export async function POST(request: Request) {
   const session = await auth();
@@ -55,11 +56,44 @@ export async function POST(request: Request) {
     orderBy: { createdAt: "asc" },
   });
 
+  // RAG: se busca contexto relevante para la pregunta actual y se "aumenta"
+  // solo el último turno (user) antes de mandarlo a Claude. Lo que queda
+  // guardado en la DB (arriba) es la pregunta original, sin el contexto
+  // inyectado — así el historial se mantiene legible en la UI.
+  let mensajesParaClaude = historial.map((m) => ({
+    rol: m.rol as "user" | "assistant",
+    contenido: m.contenido,
+  }));
+
+  try {
+    const [embeddingConsulta] = await generarEmbeddings([mensaje], "query");
+    const chunks = await buscarChunksSimilares(session.user.organizationId, embeddingConsulta, 5);
+
+    if (chunks.length > 0) {
+      const contexto = chunks
+        .map((c) => `[${c.nombreArchivo}]\n${c.contenido}`)
+        .join("\n\n---\n\n");
+
+      const promptAumentado =
+        `Responde la siguiente pregunta basándote ÚNICAMENTE en el contexto ` +
+        `proporcionado. Si la respuesta no está en el contexto, indica que ` +
+        `no tienes esa información.\n\n` +
+        `Contexto:\n${contexto}\n\n` +
+        `Pregunta: ${mensaje}`;
+
+      mensajesParaClaude = [
+        ...mensajesParaClaude.slice(0, -1),
+        { rol: "user", contenido: promptAumentado },
+      ];
+    }
+  } catch {
+    // Si falla la búsqueda RAG (ej. Voyage caído), se sigue con la pregunta
+    // tal cual — mejor una respuesta sin contexto que un chat roto.
+  }
+
   let respuesta: string;
   try {
-    respuesta = await responderChat(
-      historial.map((m) => ({ rol: m.rol as "user" | "assistant", contenido: m.contenido })),
-    );
+    respuesta = await responderChat(mensajesParaClaude);
   } catch {
     return NextResponse.json(
       { error: "No se pudo obtener respuesta del asistente.", code: "CLAUDE_API_ERROR" },
