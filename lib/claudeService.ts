@@ -1,4 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { z } from "zod";
+import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 
 const client = new Anthropic();
 
@@ -26,4 +28,36 @@ export async function responderChat(historial: MensajeChat[]): Promise<string> {
 
   const bloqueTexto = response.content.find((b) => b.type === "text");
   return bloqueTexto?.text ?? "";
+}
+
+const SentimientoSchema = z.object({
+  sentimiento: z.enum(["positivo", "negativo", "neutral"]),
+  temas: z.array(z.string()),
+  resumen: z.string(),
+});
+
+export type ResultadoSentimiento = z.infer<typeof SentimientoSchema>;
+
+// output_config.format fuerza la salida a validar contra el schema — más
+// confiable que pedir JSON en el prompt y parsear a mano.
+export async function analizarSentimiento(texto: string): Promise<ResultadoSentimiento> {
+  const response = await client.messages.parse({
+    model: MODEL,
+    max_tokens: 1024,
+    messages: [
+      {
+        role: "user",
+        content: `Analiza el sentimiento del siguiente feedback de cliente:\n\n${texto}`,
+      },
+    ],
+    output_config: {
+      format: zodOutputFormat(SentimientoSchema),
+    },
+  });
+
+  if (!response.parsed_output) {
+    throw new Error("Claude no devolvió una salida estructurada válida.");
+  }
+
+  return response.parsed_output;
 }
