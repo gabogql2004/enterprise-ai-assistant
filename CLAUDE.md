@@ -160,7 +160,10 @@ Usar códigos de error en mayúsculas y snake_case en inglés (ej. `UNAUTHORIZED
 ## ⚠️ Gotchas conocidos
 
 - **pgvector** requiere habilitar la extensión manualmente en Postgres antes de migrar: `CREATE EXTENSION IF NOT EXISTS vector;`
-- **Stripe webhooks** necesitan el body en formato *raw* (no JSON parseado) para poder verificar la firma — en Next.js esto requiere configuración especial en el route handler.
+- **Stripe webhooks** necesitan el body en formato *raw* (no JSON parseado) para poder verificar la firma. En el App Router de Next.js **no hace falta configuración especial** (a diferencia del Pages Router): basta con leer `await request.text()` en vez de `request.json()` en el route handler — ya implementado en `app/api/stripe/webhook/route.ts`.
+- **Stripe SDK v22 valida la API key en el constructor de `new Stripe(...)`** — si `STRIPE_SECRET_KEY` no está seteada, ni siquiera el build de Next.js completa (falla al evaluar el módulo). Por eso `lib/stripe.ts` inicializa el cliente perezosamente con `getStripe()` en vez de exportar una instancia ya creada.
+- **`Subscription.current_period_start/end` ya no existe en Stripe SDK v22** — se movió a cada `SubscriptionItem` (`subscription.items.data[0].current_period_start`), porque una suscripción ahora puede tener ítems con distinto ciclo de facturación.
+- **Salida estructurada de Claude**: usar `client.messages.parse()` con `output_config.format` (vía `zodOutputFormat()` del SDK) en vez de pedir JSON en el prompt y hacer `JSON.parse()` a mano — falla menos. Ver `analizarSentimiento()` en `lib/claudeService.ts`.
 - Los **embeddings** tienen un costo por llamada a la API — evitar regenerarlos si el documento no cambió (cachear o verificar hash del contenido antes de reprocesar).
 - **NextAuth + multi-tenancy:** asegurarse de que la sesión incluya siempre `organizationId`, no solo `userId`, para no tener que hacer un JOIN extra en cada request. Ya implementado vía `callbacks.jwt`/`callbacks.session` en `lib/auth.ts`.
 - **Prisma 7 cambió su arquitectura de conexión**: `url` ya no va en el `datasource` de `schema.prisma` (vive en `prisma.config.ts`), y `PrismaClient` requiere un *driver adapter* explícito (`@prisma/adapter-pg` + `pg`) en vez de resolver la URL internamente. Ver `lib/prisma.ts`. También requiere `dotenv` como dev dependency para que `prisma.config.ts` lea `.env` (`import "dotenv/config"`).
@@ -182,7 +185,8 @@ next-auth: ^5.0.0-beta.x   (nuevo — auth elegida en Fase 1, punto 2)
 pdf-parse: ^2.x        (nuevo — extracción de texto de PDF, Fase 1 punto 3)
 mammoth: última estable    (nuevo — extracción de texto de Word, Fase 1 punto 3)
 voyageai: última estable   (nuevo — SDK oficial de Voyage AI para embeddings, Fase 2)
-stripe: ^16.x           (aún no instalado, pendiente de Fase 3)
+zod: ^4.x               (nuevo — validación de salida estructurada de Claude, Fase 3)
+stripe: ^22.x           (era ^16.x — versión mayor más nueva, cambió dónde vive current_period_start/end, ver gotchas)
 ```
 
 *(Actualizar esta lista si se cambia de versión mayor en cualquiera de estas dependencias.)*
@@ -360,11 +364,20 @@ Responde en JSON:
 - Probado end-to-end con datos ficticios distintivos para confirmar que RAG no alucina: cita hechos inventados del documento correcto, declina responder sin contexto relevante, y una organización no ve documentos ni conversaciones de otra.
 
 ### Fase 3 — Sentimiento + suscripciones + pulido
-- [ ] Módulo de análisis de sentimiento
-- [ ] Integración Stripe (checkout + webhooks)
-- [ ] Límites por plan (free vs pro)
-- [ ] Panel de administración de equipo
-- [ ] Deploy y documentación completa (README con GIF demostrativo)
+- [x] Módulo de análisis de sentimiento
+- [x] Integración Stripe (checkout + webhooks) — código completo, **sin probar end-to-end** (ver nota)
+- [x] Límites por plan (free vs pro)
+- [x] Panel de administración de equipo
+- [ ] Deploy y documentación completa (README con GIF demostrativo) — README hecho, deploy y GIF pendientes
+
+**Notas de implementación de Fase 3:**
+- `lib/claudeService.ts` → `analizarSentimiento()`: usa `client.messages.parse()` con `output_config.format` (Zod) en vez de pedir JSON en el prompt y parsearlo a mano — más confiable. Nueva dependencia: `zod`.
+- Stripe: `lib/stripe.ts` inicializa el cliente perezosamente (`getStripe()`), no al cargar el módulo — la SDK v22 valida la API key en el constructor y rompía el build sin `STRIPE_SECRET_KEY` configurada.
+- **Cambio de API de Stripe detectado antes de escribir código** (revisando los tipos instalados, no memoria): `current_period_start/end` ya no vive en `Subscription`, sino en cada `SubscriptionItem` (`subscription.items.data[0].current_period_start`).
+- **Pendiente**: el usuario todavía no tiene cuenta de Stripe — el checkout, el customer portal y el webhook están implementados pero no probados con una llamada real a Stripe. Falta: crear cuenta de Stripe (modo test), pasar `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET`, crear el Product+Price de $29/mes (puede hacerse vía API una vez haya `STRIPE_SECRET_KEY`) y setear `STRIPE_PRICE_ID_PRO`, y correr `stripe listen` para probar el webhook local.
+- Límites de plan (`lib/planLimits.ts`): free = 5 documentos + 50 mensajes de chat/mes. Son un placeholder razonable para demostrar el flujo de upgrade, no un límite de negocio real. Probado end-to-end (documento #6 rechazado con `PLAN_LIMIT_REACHED`).
+- Panel de equipo: `GET /api/team` (listar) + UI en `app/(dashboard)/team`, sobre el `POST /api/team/invite` de Fase 2. Solo `admin` ve el formulario de invitación.
+- README.md reescrito con setup completo, stack y arquitectura — sin GIF demostrativo (no hay forma de grabar pantalla en este entorno de desarrollo).
 
 ---
 
@@ -412,7 +425,7 @@ Al final de cada sesión de trabajo significativa, actualizar la línea "Última
 
 ---
 
-*Última actualización: 2026-08-20 — Fase 2 completa: pgvector + chunking + embeddings (Voyage AI) + chat con RAG funcional, sistema de roles (admin/usuario/viewer) con enforcement y endpoint mínimo de invitación, e historial de conversaciones privado por usuario. Todo probado end-to-end, incluyendo aislamiento multi-tenant en la búsqueda vectorial y en el historial. Próximo paso: Fase 3 (sentimiento + Stripe + pulido).*
+*Última actualización: 2026-08-20 — Fase 3 casi completa: análisis de sentimiento (salida estructurada con Zod), integración Stripe (checkout + portal + webhooks, código completo pero sin probar en vivo — falta que el usuario cree su cuenta de Stripe), límites por plan free/pro (probado end-to-end), panel de equipo con listado + invitación, y README.md completo. Pendiente de Fase 3: deploy a Vercel y GIF demostrativo. Próximo paso: cuando el usuario tenga cuenta de Stripe, conectar keys reales, crear el Price de $29/mes, probar el flujo de checkout/webhook end-to-end, y hacer el deploy.*
 
 <!-- BEGIN:nextjs-agent-rules -->
 
