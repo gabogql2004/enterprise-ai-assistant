@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { extraerTexto, FormatoNoSoportadoError } from "@/lib/documentExtraction";
 import { dividirEnChunks } from "@/lib/chunking";
 import { generarEmbeddings } from "@/lib/vectorStore";
+import { excedeLimiteDocumentos } from "@/lib/planLimits";
 
 const TIPOS_SOPORTADOS = [
   "application/pdf",
@@ -28,6 +29,19 @@ export async function POST(request: Request) {
   if (session.user.rol === "viewer") {
     return NextResponse.json(
       { error: "Tu rol no tiene permiso para subir documentos.", code: "FORBIDDEN" },
+      { status: 403 },
+    );
+  }
+
+  const organization = await prisma.organization.findUniqueOrThrow({
+    where: { id: session.user.organizationId },
+  });
+  if (await excedeLimiteDocumentos(organization.id, organization.plan)) {
+    return NextResponse.json(
+      {
+        error: "Alcanzaste el límite de documentos de tu plan. Actualiza a Pro para subir más.",
+        code: "PLAN_LIMIT_REACHED",
+      },
       { status: 403 },
     );
   }

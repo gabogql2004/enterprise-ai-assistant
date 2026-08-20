@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { responderChat } from "@/lib/claudeService";
 import { buscarChunksSimilares, generarEmbeddings } from "@/lib/vectorStore";
+import { excedeLimiteMensajes } from "@/lib/planLimits";
 
 export async function POST(request: Request) {
   const session = await auth();
@@ -20,6 +21,19 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: "El mensaje no puede estar vacío.", code: "INVALID_INPUT" },
       { status: 400 },
+    );
+  }
+
+  const organization = await prisma.organization.findUniqueOrThrow({
+    where: { id: session.user.organizationId },
+  });
+  if (await excedeLimiteMensajes(organization.id, organization.plan)) {
+    return NextResponse.json(
+      {
+        error: "Alcanzaste el límite de mensajes de tu plan este mes. Actualiza a Pro para seguir chateando.",
+        code: "PLAN_LIMIT_REACHED",
+      },
+      { status: 403 },
     );
   }
 
