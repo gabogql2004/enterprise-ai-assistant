@@ -365,7 +365,7 @@ Responde en JSON:
 
 ### Fase 3 — Sentimiento + suscripciones + pulido
 - [x] Módulo de análisis de sentimiento
-- [x] Integración Stripe (checkout + webhooks) — código completo, **sin probar end-to-end** (ver nota)
+- [x] Integración Stripe (checkout + webhooks) — probado end-to-end (ver nota)
 - [x] Límites por plan (free vs pro)
 - [x] Panel de administración de equipo
 - [ ] Deploy y documentación completa (README con GIF demostrativo) — README hecho, deploy y GIF pendientes
@@ -374,7 +374,10 @@ Responde en JSON:
 - `lib/claudeService.ts` → `analizarSentimiento()`: usa `client.messages.parse()` con `output_config.format` (Zod) en vez de pedir JSON en el prompt y parsearlo a mano — más confiable. Nueva dependencia: `zod`.
 - Stripe: `lib/stripe.ts` inicializa el cliente perezosamente (`getStripe()`), no al cargar el módulo — la SDK v22 valida la API key en el constructor y rompía el build sin `STRIPE_SECRET_KEY` configurada.
 - **Cambio de API de Stripe detectado antes de escribir código** (revisando los tipos instalados, no memoria): `current_period_start/end` ya no vive en `Subscription`, sino en cada `SubscriptionItem` (`subscription.items.data[0].current_period_start`).
-- **Pendiente**: el usuario todavía no tiene cuenta de Stripe — el checkout, el customer portal y el webhook están implementados pero no probados con una llamada real a Stripe. Falta: crear cuenta de Stripe (modo test), pasar `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET`, crear el Product+Price de $29/mes (puede hacerse vía API una vez haya `STRIPE_SECRET_KEY`) y setear `STRIPE_PRICE_ID_PRO`, y correr `stripe listen` para probar el webhook local.
+- **Stripe probado end-to-end** (2026-08-21): Product + Price de $29/mes creados vía API (`price_1U6YKHHGLCrGAftK7Aec0UgL`), checkout real completado por el usuario con tarjeta de test, y el ciclo completo verificado: `checkout.session.completed` → `Organization.plan = "pro"` + `Subscription` creada → cancelación → `customer.subscription.deleted` → `Organization.plan` vuelve a `"free"`.
+- **`stripe listen` no es confiable para pruebas largas**: la conexión se cortó por un problema de red durante la prueba ("no route to host") y perdió el evento `checkout.session.completed` real (solo reenvió `customer.created`). Para verificar la lógica del webhook sin depender de que la sesión de `stripe listen` siga viva, se puede reconstruir el evento real (`stripe.checkout.sessions.retrieve(...)` para traer los datos reales) y firmarlo con `stripe.webhooks.generateTestHeaderString({ payload, secret })` antes de hacer POST directo a `/api/stripe/webhook` — prueba la lógica de negocio igual de bien que un evento reenviado por Stripe, sin depender de la estabilidad de la conexión CLI.
+- **`stripe listen --api-key <key>` evita el login por navegador** (`stripe login` requiere OAuth interactivo); usa `--print-secret` para obtener el `STRIPE_WEBHOOK_SECRET` sin necesidad de crear un webhook endpoint en el Dashboard.
+- **`dotenv` 17.x imprime un mensaje promocional en stdout** al llamar a `config()`, salvo que se pase `{ quiet: true }`. Esto contaminaba la salida de cualquier script que capturara stdout de un proceso que cargara `.env` (por ejemplo, extraer una API key con `node -e "require('dotenv').config(); console.log(...)"` en una subshell de bash) — el texto del mensaje se colaba en el valor capturado. Ya corregido en `prisma.config.ts`; tenerlo en cuenta en cualquier script nuevo que use `dotenv/config`.
 - Límites de plan (`lib/planLimits.ts`): free = 5 documentos + 50 mensajes de chat/mes. Son un placeholder razonable para demostrar el flujo de upgrade, no un límite de negocio real. Probado end-to-end (documento #6 rechazado con `PLAN_LIMIT_REACHED`).
 - Panel de equipo: `GET /api/team` (listar) + UI en `app/(dashboard)/team`, sobre el `POST /api/team/invite` de Fase 2. Solo `admin` ve el formulario de invitación.
 - README.md reescrito con setup completo, stack y arquitectura — sin GIF demostrativo (no hay forma de grabar pantalla en este entorno de desarrollo).
@@ -425,7 +428,7 @@ Al final de cada sesión de trabajo significativa, actualizar la línea "Última
 
 ---
 
-*Última actualización: 2026-08-20 — Fase 3 casi completa: análisis de sentimiento (salida estructurada con Zod), integración Stripe (checkout + portal + webhooks, código completo pero sin probar en vivo — falta que el usuario cree su cuenta de Stripe), límites por plan free/pro (probado end-to-end), panel de equipo con listado + invitación, y README.md completo. Pendiente de Fase 3: deploy a Vercel y GIF demostrativo. Próximo paso: cuando el usuario tenga cuenta de Stripe, conectar keys reales, crear el Price de $29/mes, probar el flujo de checkout/webhook end-to-end, y hacer el deploy.*
+*Última actualización: 2026-08-21 — Fase 3 completa salvo deploy: Stripe probado end-to-end con cuenta real de test (checkout → suscripción activa → cancelación → downgrade a free, todo verificado en la base de datos). Corregido un bug de `dotenv` que contaminaba stdout en scripts auxiliares. Único pendiente de todo el checklist de CLAUDE.md: deploy a Vercel y GIF demostrativo.*
 
 <!-- BEGIN:nextjs-agent-rules -->
 
