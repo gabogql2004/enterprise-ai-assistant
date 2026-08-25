@@ -30,7 +30,9 @@ export default function ChatPage() {
   }
 
   useEffect(() => {
-    cargarConversaciones();
+    (async () => {
+      await cargarConversaciones();
+    })();
   }, []);
 
   async function abrirConversacion(id: string) {

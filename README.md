@@ -113,6 +113,20 @@ lib/
 prisma/schema.prisma            # modelo de datos completo
 ```
 
+## Deploy (pendiente — checklist para la próxima sesión)
+
+El código está listo para desplegar; falta la infraestructura de producción. Pasos, en orden:
+
+1. **Base de datos**: crear un proyecto en [Neon](https://console.neon.tech/) (o Supabase/Prisma Postgres), habilitar `pgvector` si no viene por defecto, y copiar la connection string.
+2. **Migrar**: con `DATABASE_URL` apuntando a esa base, correr `npx prisma migrate deploy` (aplica todas las migraciones, incluyendo `CREATE EXTENSION IF NOT EXISTS vector`).
+3. **Vercel**: conectar el repo de GitHub (`gabogql2004/enterprise-ai-assistant`) en [vercel.com/new](https://vercel.com/new). Framework preset "Next.js" se detecta solo.
+4. **Variables de entorno en Vercel** (Project Settings → Environment Variables): `DATABASE_URL` (la de Neon, no la local), `ANTHROPIC_API_KEY`, `VOYAGE_API_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID_PRO`, `NEXTAUTH_SECRET`, `AUTH_TRUST_HOST=true`.
+5. **Deploy** desde Vercel.
+6. **Webhook de Stripe en producción**: en el [Dashboard de Stripe](https://dashboard.stripe.com/test/webhooks) → *Add endpoint* → URL `https://<tu-dominio>.vercel.app/api/stripe/webhook`, eventos `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`. Copiar el signing secret que genera y agregarlo como `STRIPE_WEBHOOK_SECRET` en Vercel (el que se usó en desarrollo, de `stripe listen`, es solo local y no sirve en producción). Redeploy tras agregarlo.
+7. **Probar en producción**: registrar una organización, subir un documento, chatear, y completar un checkout de prueba contra la URL real.
+
+No hay GIF demostrativo todavía — se puede grabar una vez esté desplegado (más representativo que grabar localhost).
+
 ## Seguridad multi-tenant
 
 Toda query que involucra `Document`, `Conversation`, `Message` o `SentimentAnalysis` filtra explícitamente por `organizationId`, obtenido siempre de la sesión autenticada — nunca de un parámetro enviado por el cliente. El historial de conversaciones además filtra por `userId`: cada persona ve solo lo suyo dentro de su organización.

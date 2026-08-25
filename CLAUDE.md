@@ -93,21 +93,7 @@ npx prisma generate        # Regenerar cliente de Prisma tras cambios en schema
 
 ## 🔧 Setup de entorno local
 
-1. Clonar el repo e instalar dependencias: `npm install`
-2. Levantar PostgreSQL local (con extensión `pgvector` habilitada) o usar una instancia en la nube (ej. Supabase, Neon)
-3. Copiar `.env.example` a `.env` y completar:
-   ```
-   DATABASE_URL=postgresql://...
-   ANTHROPIC_API_KEY=sk-ant-...
-   STRIPE_SECRET_KEY=sk_test_...
-   STRIPE_WEBHOOK_SECRET=whsec_...
-   NEXTAUTH_SECRET=...       # o CLERK_SECRET_KEY si se usa Clerk
-   ```
-4. Correr migraciones: `npx prisma migrate dev`
-5. (Opcional) Sembrar datos de prueba: `npx prisma db seed`
-6. Levantar servidor: `npm run dev`
-
-Para probar Stripe localmente, usar `stripe listen --forward-to localhost:3000/api/stripe/webhook` (Stripe CLI).
+Instrucciones completas y actualizadas en [README.md](./README.md) — no duplicar aquí para no desincronizarse. Resumen: `npm install` → completar `.env` (ver `.env.example`) → `npx prisma migrate dev` → `npm run dev`. No hay seed script (no fue necesario en ninguna fase del checklist).
 
 ---
 
@@ -428,7 +414,7 @@ Al final de cada sesión de trabajo significativa, actualizar la línea "Última
 
 ---
 
-*Última actualización: 2026-08-21 — Fase 3 completa salvo deploy: Stripe probado end-to-end con cuenta real de test (checkout → suscripción activa → cancelación → downgrade a free, todo verificado en la base de datos). Corregido un bug de `dotenv` que contaminaba stdout en scripts auxiliares. Único pendiente de todo el checklist de CLAUDE.md: deploy a Vercel y GIF demostrativo.*
+*Última actualización: 2026-08-21 — Proyecto pulido y listo para deploy (a pedido explícito del usuario, que prefirió dejar el deploy real para otra sesión): corregidos 3 errores de lint (`react-hooks/set-state-in-effect` en chat/sentiment/team, fetch inicial movido a IIFE async dentro del `useEffect`), `npm audit` revisado (única vulnerabilidad conocida vive en una dependencia interna del CLI de Prisma, no en runtime — no se toca sin confirmar), sección "Setup de entorno local" desduplicada hacia README.md, y README.md con un checklist paso a paso de deploy (Neon + Vercel + webhook de Stripe en producción) listo para ejecutar cuando se retome. Stripe ya está probado end-to-end con cuenta real de test. Único pendiente de todo el checklist de CLAUDE.md: deploy real y GIF demostrativo.*
 
 <!-- BEGIN:nextjs-agent-rules -->
 

@@ -33,7 +33,9 @@ export default function SentimentPage() {
   }
 
   useEffect(() => {
-    cargarHistorial();
+    (async () => {
+      await cargarHistorial();
+    })();
   }, []);
 
   async function analizar(e: React.FormEvent) {
