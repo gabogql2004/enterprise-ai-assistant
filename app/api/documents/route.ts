@@ -13,6 +13,38 @@ const TIPOS_SOPORTADOS = [
 ];
 const TAMANO_MAXIMO_BYTES = 10 * 1024 * 1024; // 10MB
 
+export async function GET() {
+  const session = await auth();
+  if (!session?.user) {
+    return NextResponse.json(
+      { error: "No autenticado.", code: "UNAUTHORIZED" },
+      { status: 401 },
+    );
+  }
+
+  const documentos = await prisma.document.findMany({
+    where: { organizationId: session.user.organizationId },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      nombreArchivo: true,
+      estado: true,
+      createdAt: true,
+      _count: { select: { chunks: true } },
+    },
+  });
+
+  return NextResponse.json({
+    data: documentos.map((d) => ({
+      id: d.id,
+      nombreArchivo: d.nombreArchivo,
+      estado: d.estado,
+      createdAt: d.createdAt,
+      chunks: d._count.chunks,
+    })),
+  });
+}
+
 export async function POST(request: Request) {
   const session = await auth();
   // organizationId y userId salen SIEMPRE de la sesión autenticada, nunca

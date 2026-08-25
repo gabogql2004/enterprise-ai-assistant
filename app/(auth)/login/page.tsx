@@ -7,13 +7,8 @@ import { signIn } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Logo } from "@/components/logo";
+import { AuthBrandPanel } from "@/components/auth-brand-panel";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -45,16 +40,21 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Iniciar sesión</CardTitle>
-          <CardDescription>
+    <div className="grid min-h-screen lg:grid-cols-2">
+      <AuthBrandPanel />
+
+      <div className="flex items-center justify-center px-6 py-12">
+        <div className="w-full max-w-sm">
+          <div className="mb-8 lg:hidden">
+            <Logo />
+          </div>
+
+          <h1 className="text-2xl font-semibold tracking-tight">Inicia sesión</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
             Accede al asistente de tu organización.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+          </p>
+
+          <form onSubmit={handleSubmit} className="mt-8 flex flex-col gap-4">
             <div className="flex flex-col gap-2">
               <Label htmlFor="email">Email</Label>
               <Input
@@ -76,18 +76,19 @@ export default function LoginPage() {
               />
             </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
-            <Button type="submit" disabled={cargando}>
+            <Button type="submit" disabled={cargando} className="mt-2">
               {cargando ? "Ingresando..." : "Ingresar"}
             </Button>
           </form>
-          <p className="mt-4 text-center text-sm text-muted-foreground">
+
+          <p className="mt-6 text-center text-sm text-muted-foreground">
             ¿No tienes cuenta?{" "}
-            <Link href="/register" className="underline">
+            <Link href="/register" className="font-medium text-primary hover:underline">
               Crea tu organización
             </Link>
           </p>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }
