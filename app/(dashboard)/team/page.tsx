@@ -34,7 +34,9 @@ export default function TeamPage() {
   }
 
   useEffect(() => {
-    cargarMiembros();
+    (async () => {
+      await cargarMiembros();
+    })();
   }, []);
 
   async function invitar(e: React.FormEvent) {
