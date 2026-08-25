@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Frown, Meh, Smile as SmileIcon, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 
 interface Analisis {
@@ -13,10 +15,13 @@ interface Analisis {
   createdAt: string;
 }
 
-const COLOR_POR_SENTIMIENTO: Record<Analisis["sentimiento"], string> = {
-  positivo: "text-green-600 dark:text-green-400",
-  negativo: "text-red-600 dark:text-red-400",
-  neutral: "text-muted-foreground",
+const CONFIG_SENTIMIENTO: Record<
+  Analisis["sentimiento"],
+  { icon: typeof SmileIcon; className: string }
+> = {
+  positivo: { icon: SmileIcon, className: "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-400" },
+  negativo: { icon: Frown, className: "border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-400" },
+  neutral: { icon: Meh, className: "border-border bg-muted text-muted-foreground" },
 };
 
 export default function SentimentPage() {
@@ -67,44 +72,67 @@ export default function SentimentPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl p-6">
-      <h1 className="mb-4 text-xl font-semibold">Análisis de sentimiento</h1>
+    <div className="mx-auto max-w-3xl p-8">
+      <div className="mb-1 flex items-center gap-2">
+        <h1 className="text-2xl font-semibold tracking-tight">Análisis de sentimiento</h1>
+      </div>
+      <p className="mb-6 text-sm text-muted-foreground">
+        Pega feedback de clientes y obtén sentimiento, temas y un resumen al instante.
+      </p>
 
-      <form onSubmit={analizar} className="mb-6 flex gap-2">
-        <Input
-          value={texto}
-          onChange={(e) => setTexto(e.target.value)}
-          placeholder="Pega el feedback de un cliente..."
-          disabled={analizando}
-        />
-        <Button type="submit" disabled={analizando || !texto.trim()}>
-          {analizando ? "Analizando..." : "Analizar"}
-        </Button>
-      </form>
-
-      {error && <p className="mb-4 text-sm text-destructive">{error}</p>}
-      {resumen && (
-        <p className="mb-6 rounded-md bg-muted p-3 text-sm">{resumen}</p>
-      )}
+      <Card className="mb-8 py-4">
+        <CardContent>
+          <form onSubmit={analizar} className="flex gap-2">
+            <Input
+              value={texto}
+              onChange={(e) => setTexto(e.target.value)}
+              placeholder="Pega el feedback de un cliente..."
+              disabled={analizando}
+              className="h-11"
+            />
+            <Button type="submit" disabled={analizando || !texto.trim()} className="h-11 gap-2">
+              <Sparkles className="size-4" />
+              {analizando ? "Analizando..." : "Analizar"}
+            </Button>
+          </form>
+          {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+          {resumen && (
+            <p className="mt-3 rounded-lg bg-primary/5 p-3 text-sm text-foreground">{resumen}</p>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="space-y-3">
-        {historial.map((a) => (
-          <Card key={a.id}>
-            <CardContent className="pt-4">
-              <p className="text-sm">{a.textoOriginal}</p>
-              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                <span className={`font-medium capitalize ${COLOR_POR_SENTIMIENTO[a.sentimiento]}`}>
-                  {a.sentimiento}
+        {historial.length === 0 && (
+          <p className="py-10 text-center text-sm text-muted-foreground">
+            Todavía no hay análisis. Prueba con el primero arriba.
+          </p>
+        )}
+        {historial.map((a) => {
+          const { icon: Icon, className } = CONFIG_SENTIMIENTO[a.sentimiento];
+          return (
+            <Card key={a.id} className="py-4 transition-shadow hover:shadow-sm">
+              <CardContent className="flex items-start gap-4">
+                <span className={`flex size-9 shrink-0 items-center justify-center rounded-full border ${className}`}>
+                  <Icon className="size-4" />
                 </span>
-                {a.temas.map((t) => (
-                  <span key={t} className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">
-                    {t}
-                  </span>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-foreground">{a.textoOriginal}</p>
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <Badge className={`capitalize ${className}`} variant="outline">
+                      {a.sentimiento}
+                    </Badge>
+                    {a.temas.map((t) => (
+                      <Badge key={t} variant="secondary" className="font-normal">
+                        {t}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
     </div>
   );

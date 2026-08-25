@@ -2,10 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
+import { UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Separator } from "@/components/ui/separator";
 
 interface Miembro {
   id: string;
@@ -13,6 +17,16 @@ interface Miembro {
   email: string;
   rol: string;
   createdAt: string;
+}
+
+const VARIANTE_ROL: Record<string, string> = {
+  admin: "border-primary/30 bg-primary/10 text-primary",
+  usuario: "border-border bg-muted text-foreground",
+  viewer: "border-border bg-muted text-muted-foreground",
+};
+
+function iniciales(nombre: string) {
+  return nombre.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
 }
 
 export default function TeamPage() {
@@ -65,18 +79,32 @@ export default function TeamPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6 p-6">
-      <h1 className="text-xl font-semibold">Equipo</h1>
+    <div className="mx-auto max-w-3xl space-y-8 p-8">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Equipo</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {miembros.length} {miembros.length === 1 ? "miembro" : "miembros"} en tu organización.
+        </p>
+      </div>
 
-      <Card>
-        <CardContent className="divide-y pt-4">
+      <Card className="py-2">
+        <CardContent className="divide-y px-0">
           {miembros.map((m) => (
-            <div key={m.id} className="flex items-center justify-between py-2 text-sm">
-              <div>
-                <p className="font-medium">{m.nombre}</p>
-                <p className="text-muted-foreground">{m.email}</p>
+            <div key={m.id} className="flex items-center justify-between gap-4 px-6 py-3.5">
+              <div className="flex min-w-0 items-center gap-3">
+                <Avatar className="size-9">
+                  <AvatarFallback className="bg-muted text-xs font-medium">
+                    {iniciales(m.nombre)}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{m.nombre}</p>
+                  <p className="truncate text-sm text-muted-foreground">{m.email}</p>
+                </div>
               </div>
-              <span className="rounded-full bg-muted px-2 py-0.5 text-xs capitalize">{m.rol}</span>
+              <Badge variant="outline" className={`shrink-0 capitalize ${VARIANTE_ROL[m.rol] ?? ""}`}>
+                {m.rol}
+              </Badge>
             </div>
           ))}
         </CardContent>
@@ -85,44 +113,53 @@ export default function TeamPage() {
       {esAdmin && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Invitar miembro</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <UserPlus className="size-4" />
+              Invitar miembro
+            </CardTitle>
+            <CardDescription>Se crea una cuenta con el rol que elijas.</CardDescription>
           </CardHeader>
+          <Separator className="mb-2" />
           <CardContent>
             <form onSubmit={invitar} className="flex flex-col gap-4">
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="nombre">Nombre</Label>
-                <Input id="nombre" required value={nombre} onChange={(e) => setNombre(e.target.value)} />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="nombre">Nombre</Label>
+                  <Input id="nombre" required value={nombre} onChange={(e) => setNombre(e.target.value)} />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="email">Email</Label>
+                  <Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+                </div>
               </div>
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="email">Email</Label>
-                <Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
-              </div>
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="password">Contraseña temporal</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  required
-                  minLength={8}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-              </div>
-              <div className="flex flex-col gap-2">
-                <Label htmlFor="rol">Rol</Label>
-                <select
-                  id="rol"
-                  value={rol}
-                  onChange={(e) => setRol(e.target.value)}
-                  className="h-9 rounded-md border bg-background px-3 text-sm"
-                >
-                  <option value="admin">admin</option>
-                  <option value="usuario">usuario</option>
-                  <option value="viewer">viewer</option>
-                </select>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="password">Contraseña temporal</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    required
+                    minLength={8}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-2">
+                  <Label htmlFor="rol">Rol</Label>
+                  <select
+                    id="rol"
+                    value={rol}
+                    onChange={(e) => setRol(e.target.value)}
+                    className="flex h-9 rounded-md border bg-background px-3 text-sm shadow-xs"
+                  >
+                    <option value="admin">admin</option>
+                    <option value="usuario">usuario</option>
+                    <option value="viewer">viewer</option>
+                  </select>
+                </div>
               </div>
               {error && <p className="text-sm text-destructive">{error}</p>}
-              <Button type="submit" disabled={invitando}>
+              <Button type="submit" disabled={invitando} className="self-start">
                 {invitando ? "Invitando..." : "Invitar"}
               </Button>
             </form>
