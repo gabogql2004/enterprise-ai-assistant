@@ -4,6 +4,8 @@ SaaS B2B multi-tenant que permite a empresas subir documentos internos (polític
 
 > Proyecto de portafolio. El plan de desarrollo completo, las decisiones técnicas y los gotchas conocidos viven en [`CLAUDE.md`](./CLAUDE.md).
 
+**Demo en vivo:** https://enterprise-ai-assistant-lake.vercel.app
+
 ## Funcionalidad
 
 - **Multi-tenancy real**: cada organización tiene sus propios usuarios, documentos, conversaciones y análisis — nunca se filtran entre organizaciones.
@@ -113,19 +115,24 @@ lib/
 prisma/schema.prisma            # modelo de datos completo
 ```
 
-## Deploy (pendiente — checklist para la próxima sesión)
+## Deploy
 
-El código está listo para desplegar; falta la infraestructura de producción. Pasos, en orden:
+Desplegado en Vercel + Neon (Postgres serverless con `pgvector`). Stack de infra:
 
-1. **Base de datos**: crear un proyecto en [Neon](https://console.neon.tech/) (o Supabase/Prisma Postgres), habilitar `pgvector` si no viene por defecto, y copiar la connection string.
-2. **Migrar**: con `DATABASE_URL` apuntando a esa base, correr `npx prisma migrate deploy` (aplica todas las migraciones, incluyendo `CREATE EXTENSION IF NOT EXISTS vector`).
-3. **Vercel**: conectar el repo de GitHub (`gabogql2004/enterprise-ai-assistant`) en [vercel.com/new](https://vercel.com/new). Framework preset "Next.js" se detecta solo.
-4. **Variables de entorno en Vercel** (Project Settings → Environment Variables): `DATABASE_URL` (la de Neon, no la local), `ANTHROPIC_API_KEY`, `VOYAGE_API_KEY`, `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID_PRO`, `NEXTAUTH_SECRET`, `AUTH_TRUST_HOST=true`.
-5. **Deploy** desde Vercel.
-6. **Webhook de Stripe en producción**: en el [Dashboard de Stripe](https://dashboard.stripe.com/test/webhooks) → *Add endpoint* → URL `https://<tu-dominio>.vercel.app/api/stripe/webhook`, eventos `checkout.session.completed`, `customer.subscription.updated`, `customer.subscription.deleted`. Copiar el signing secret que genera y agregarlo como `STRIPE_WEBHOOK_SECRET` en Vercel (el que se usó en desarrollo, de `stripe listen`, es solo local y no sirve en producción). Redeploy tras agregarlo.
-7. **Probar en producción**: registrar una organización, subir un documento, chatear, y completar un checkout de prueba contra la URL real.
+- **Base de datos**: proyecto en [Neon](https://console.neon.tech/), migrado con `prisma migrate deploy` (incluye `CREATE EXTENSION IF NOT EXISTS vector`).
+- **Hosting**: Vercel, repo conectado a `gabogql2004/enterprise-ai-assistant` (auto-deploy en cada push a `main`).
+- **Webhook de Stripe**: endpoint registrado vía API de Stripe apuntando a `/api/stripe/webhook` de la URL de producción (el signing secret de `stripe listen` usado en desarrollo es solo local, no sirve en producción — cada entorno necesita su propio webhook endpoint y secret).
 
-No hay GIF demostrativo todavía — se puede grabar una vez esté desplegado (más representativo que grabar localhost).
+**Dos problemas específicos de correr `pdf-parse` en el runtime serverless de Vercel** (no aparecen en local ni en el build, solo en producción) — ambos ya resueltos en `next.config.ts`:
+
+1. `pdfjs-dist` (dependencia de `pdf-parse`) hace un `require()` dinámico de `@napi-rs/canvas` (para polyfillear `DOMMatrix`) envuelto en `try/catch`. El *output file tracing* de Vercel (`@vercel/nft`) no detecta ese require dinámico por análisis estático, así que no copia el módulo — ni su binario nativo — a la función serverless. Sin el polyfill, la extracción de PDF falla con `DOMMatrix is not defined`.
+2. Por el mismo motivo de file tracing, tampoco se copiaba `pdfjs-dist/legacy/build/pdf.worker.mjs`, y la extracción fallaba con `Cannot find module '.../pdf.worker.mjs'`.
+
+Solución: `outputFileTracingIncludes` en `next.config.ts` fuerza explícitamente la inclusión de `@napi-rs/canvas`, su binario `linux-x64-gnu`, y todo `pdfjs-dist` en el bundle de `/api/documents`.
+
+Otro ajuste necesario: **Vercel bloquea los scripts de instalación de dependencias por seguridad** (`npm warn allow-scripts`), lo que impedía que `prisma generate` corriera automáticamente tras `npm install` — el build fallaba con `Module '"@prisma/client"' has no exported member 'PrismaClient'`. Se agregó `"postinstall": "prisma generate"` a `package.json` para forzarlo explícitamente (script propio, no de una dependencia de terceros, así que sí se ejecuta).
+
+No hay GIF demostrativo todavía.
 
 ## Seguridad multi-tenant
 
