@@ -33,6 +33,7 @@ Deploy:        Vercel (frontend + backend integrados vía Next.js)
 - **PostgreSQL local vía Postgres.app** (no una instancia en la nube tipo Supabase/Neon): decisión del usuario para desarrollo local. Postgres.app en versiones recientes ya trae `pgvector` precompilado, así que Fase 2 solo necesita `CREATE EXTENSION IF NOT EXISTS vector;`, sin instalar nada adicional.
 - **Voyage AI para embeddings** (Fase 2): Claude API (Anthropic) no tiene endpoint de embeddings — el CLAUDE.md original asumía "chat + embeddings" desde Claude, pero eso no existe. Voyage AI es el partner oficial de Anthropic para esto. Se usa `voyage-3-lite` (512 dimensiones — ver `prisma/schema.prisma`, `DocumentChunk.embedding vector(512)`) por su balance costo/calidad para documentos de políticas/manuales/FAQs (no código). Requiere `VOYAGE_API_KEY` propia, separada de `ANTHROPIC_API_KEY`.
 - **Chunking sin tokenizer real**: `lib/chunking.ts` aproxima 1 token ≈ 0.75 palabras (375 palabras ≈ 500 tokens) en vez de integrar un tokenizer real, para evitar otra dependencia. Es una aproximación, no un conteo exacto.
+- **Vercel + Neon para producción** (deploy): Vercel porque el proyecto ya es Next.js y tiene la integración más directa (Git-connected, auto-deploy); Neon porque Postgres.app es solo local y Neon da Postgres serverless con `pgvector` soportado nativamente sin configuración extra, con un plan gratis suficiente para este proyecto. Ambos CLIs (`vercel`, `neonctl`) se autentican vía OAuth de navegador sin necesidad de pegar API keys manualmente.
 - **Historial de conversaciones es privado por usuario**, no compartido a nivel de organización: cada quien ve solo sus propias conversaciones (`Conversation.userId` + `organizationId` de la sesión). Si más adelante se quiere que un admin vea las conversaciones del equipo, es un cambio de alcance a decidir explícitamente, no algo ya soportado.
 - **Sistema de roles sin panel de equipo todavía**: se implementó el enforcement de permisos (`viewer` no puede subir documentos ni invitar; solo `admin` puede invitar) y un endpoint mínimo `POST /api/team/invite` sin UI. El panel de administración de equipo (con UI) sigue siendo tarea de Fase 3.
 
@@ -157,6 +158,9 @@ Usar códigos de error en mayúsculas y snake_case en inglés (ej. `UNAUTHORIZED
 - **`pdf-parse` (vía `pdfjs-dist`) rompe bajo Turbopack** si se deja que lo empaquete: falla con "Setting up fake worker failed" porque no puede resolver su worker interno desde el bundle. Solución: agregarlo a `serverExternalPackages` en `next.config.ts` (ya hecho).
 - **`pdf-parse` v2 cambió su API** respecto a versiones anteriores: ya no es `pdf(buffer)` sino `new PDFParse({ data: buffer }).getText()` + `.destroy()` para liberar memoria. Ver `lib/documentExtraction.ts`.
 - **Next.js 16 auto-generaba un bloque `<!-- BEGIN:nextjs-agent-rules -->` al final de este archivo en cada `next dev`.** Se desactivó (`agentRules: false` en `next.config.ts`) después de que la reescritura truncara el resto del archivo dos veces en la misma sesión (aparentemente al reiniciar el dev server varias veces seguidas). El bloque que queda al final de este archivo es el último que se generó — ya no se actualiza solo, se puede editar/quitar con confianza.
+- **Vercel bloquea los scripts de instalación de dependencias por seguridad** (`npm warn allow-scripts`) — sin `"postinstall": "prisma generate"` explícito en `package.json`, el build de Vercel falla con `Module '"@prisma/client"' has no exported member 'PrismaClient'` porque `@prisma/client` nunca se generó (el postinstall/preinstall internos de `prisma`/`@prisma/engines` quedan bloqueados, pero un script declarado en el propio `package.json` del proyecto sí corre).
+- **`pdf-parse` (vía `pdfjs-dist`) falla en el runtime serverless de Vercel** aunque funcione en local y en el build — dos problemas distintos, ambos por el *output file tracing* (`@vercel/nft`) de Vercel: (1) `pdfjs-dist` hace `require("@napi-rs/canvas")` dinámico envuelto en `try/catch` para polyfillear `DOMMatrix`, y el análisis estático de NFT no lo detecta, así que no copia el módulo (ni su binario nativo) a la función → error `DOMMatrix is not defined`; (2) por el mismo motivo tampoco se incluye `pdfjs-dist/legacy/build/pdf.worker.mjs` → error `Cannot find module '.../pdf.worker.mjs'`. Se soluciona forzando la inclusión con `outputFileTracingIncludes` en `next.config.ts` (ver ahí) — instalar `@napi-rs/canvas` como dependencia nueva.
+- **Deploy real**: Vercel (proyecto `gabriel-quijada/enterprise-ai-assistant`, repo de GitHub conectado para auto-deploy en cada push a `main`) + Neon como Postgres de producción (con `pgvector`). Webhook de Stripe de producción registrado por separado del de desarrollo (`stripe listen` es solo local, no reemplaza tener un webhook endpoint real registrado en el Dashboard/API de Stripe apuntando a la URL de Vercel).
 
 ---
 
@@ -172,6 +176,7 @@ pdf-parse: ^2.x        (nuevo — extracción de texto de PDF, Fase 1 punto 3)
 mammoth: última estable    (nuevo — extracción de texto de Word, Fase 1 punto 3)
 voyageai: última estable   (nuevo — SDK oficial de Voyage AI para embeddings, Fase 2)
 zod: ^4.x               (nuevo — validación de salida estructurada de Claude, Fase 3)
+@napi-rs/canvas: última estable (nuevo — polyfill de DOMMatrix para pdf-parse en runtime serverless, deploy)
 stripe: ^22.x           (era ^16.x — versión mayor más nueva, cambió dónde vive current_period_start/end, ver gotchas)
 ```
 
@@ -354,7 +359,7 @@ Responde en JSON:
 - [x] Integración Stripe (checkout + webhooks) — probado end-to-end (ver nota)
 - [x] Límites por plan (free vs pro)
 - [x] Panel de administración de equipo
-- [ ] Deploy y documentación completa (README con GIF demostrativo) — README hecho, deploy y GIF pendientes
+- [x] Deploy y documentación completa (README con GIF demostrativo) — deploy hecho (Vercel + Neon), sin GIF todavía
 
 **Notas de implementación de Fase 3:**
 - `lib/claudeService.ts` → `analizarSentimiento()`: usa `client.messages.parse()` con `output_config.format` (Zod) en vez de pedir JSON en el prompt y parsearlo a mano — más confiable. Nueva dependencia: `zod`.
@@ -414,7 +419,7 @@ Al final de cada sesión de trabajo significativa, actualizar la línea "Última
 
 ---
 
-*Última actualización: 2026-08-25 — Rediseño visual completo (a pedido del usuario): paleta con acento indigo sobre grises "slate" (antes gris puro sin color), layout de sidebar en el dashboard reemplazando la barra superior, páginas de login/register con panel de marca dividido, renderizado de markdown real en el chat (`react-markdown` + `remark-gfm` + `@tailwindcss/typography` — antes Claude devolvía `##`/`**` como texto literal), y componentes shadcn nuevos (`badge`, `avatar`, `separator`, `skeleton`). De paso se detectó y cerró un vacío funcional: nunca había existido una página de UI para subir/ver documentos (`app/(dashboard)/documents`, + `GET /api/documents`) — sin eso no se podía usar el RAG desde el navegador, solo por API. El usuario revisó el resultado en su navegador y confirmó que le gusta, sin pedir más cambios. Análisis de sentimiento: el usuario cuestionó su encaje de producto (le habla a un usuario de soporte/CS, no al empleado que usa el chat de documentos); se explicó el porqué (parte del "cerrar el ciclo" de la serie de portafolio) y decidió mantenerlo tal cual. Sigue pendiente: deploy real y GIF demostrativo.*
+*Última actualización: 2026-09-07 — Deploy real completado: Vercel (`gabriel-quijada/enterprise-ai-assistant`, auto-deploy desde `main`) + Neon como Postgres de producción con pgvector, migrado con `prisma migrate deploy`. Se resolvieron dos bugs específicos del runtime serverless de Vercel (invisibles en local y en el build) relacionados con el output file tracing y `pdf-parse`/`pdfjs-dist` — ver gotchas. También se agregó `postinstall: "prisma generate"` porque Vercel bloquea los install scripts de las dependencias por seguridad. Probado end-to-end en producción real: registro, login, upload de PDF y Word, chat con RAG citando el documento correcto, y webhook de Stripe de producción (registrado por separado del de desarrollo) respondiendo 200 con firma válida. Demo en vivo en README.md. Único pendiente de todo el checklist de CLAUDE.md: GIF demostrativo.*
 
 <!-- BEGIN:nextjs-agent-rules -->
 
